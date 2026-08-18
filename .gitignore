@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# local datasets / generated predictions
+datasets/
+VOCdevkit/
+predictions/
+voc_predictions/
+*.tar
+*.tar.gz
+*.nii
+*.nii.gz
