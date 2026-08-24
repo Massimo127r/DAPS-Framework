@@ -8,6 +8,7 @@ datasets/
 VOCdevkit/
 predictions/
 voc_predictions/
+batch_evaluator/outputs/
 *.tar
 *.tar.gz
 *.nii

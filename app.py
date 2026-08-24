@@ -6,6 +6,8 @@ from typing import Any, List, Optional, Tuple
 import gradio as gr
 import numpy as np
 
+from batch_evaluator.runner import run_batch_and_export
+
 from daps_core.consensus import run_daps
 from daps_core.metrics import multiclass_iou
 from daps_core.models import (
@@ -32,7 +34,7 @@ from daps_core.voc import (
 APP_DIR = Path(__file__).resolve().parent
 DATASETS_DIR = APP_DIR / "datasets"
 
-DEFAULT_VOC_ROOT = str(DATASETS_DIR / "voc")
+DEFAULT_VOC_ROOT = str(DATASETS_DIR / "VOCdevkit" / "VOC2012")
 DEFAULT_RAW_IMAGES_ROOT = str(DATASETS_DIR / "raw_images")
 DEFAULT_TEST_IMAGES_ROOT = str(DATASETS_DIR / "test_images")
 DEFAULT_PROCESSED_ROOT = str(DATASETS_DIR / "processed_dataset")
@@ -399,99 +401,140 @@ def run_demo(
     raise gr.Error(f"Dataset non supportato: {dataset_type}")
 
 
-with gr.Blocks(title="Consenso DAPS - Semantic Segmentation MVP") as demo:
-    gr.Markdown("# DAPS4Massimo - DAPS Segmentation MVP")
+def run_batch_from_ui(
+    dataset_type: str,
+    dataset_root: str,
+    voc_split: str,
+    model_1_name: str,
+    model_2_name: str,
+    daps_mode: str,
+    progress=gr.Progress(),
+) -> tuple[str, str]:
+    """Collega la logica batch alla UI Gradio."""
+
+    def update_progress(done: int, total: int, case_id: str) -> None:
+        progress(
+            done / total,
+            desc=f"Elaborazione {done}/{total}: {case_id}",
+        )
+
+    try:
+        report_path = run_batch_and_export(
+            dataset_type=dataset_type,
+            dataset_root=dataset_root,
+            voc_split=voc_split,
+            model_1_name=model_1_name,
+            model_2_name=model_2_name,
+            daps_mode=daps_mode,
+            app_dir=APP_DIR,
+            on_progress=update_progress,
+        )
+
+        return (
+            str(report_path),
+            f"Batch completato. Report creato: {report_path.name}",
+        )
+
+    except Exception as exc:
+        raise gr.Error(f"Batch non completato: {exc}") from exc
+
+
+def refresh_batch_models(
+    dataset_type: str, dataset_root: str, voc_split: str
+) -> Tuple[Any, Any, str]:
+    """Aggiorna i modelli disponibili nella scheda Batch."""
+    _, model_1_update, model_2_update, message = refresh(
+        dataset_type, dataset_root, voc_split
+    )
+    return model_1_update, model_2_update, message
+
+with gr.Blocks(title="Consenso DAPS - Semantic Segmentation ") as demo:
+    gr.Markdown("# Framework sperimentale per il confronto e il consenso tra modelli di segmentazione semantica")
     gr.Markdown(
         "Seleziona  PASCAL VOC2012 oppure le cartelle originali DAPS "
-        "raw_images / test_images / processed_dataset. La GUI visualizza Model 1, Model 2 e DAPS."
+        "raw_images / test_images / processed_dataset. La GUI mostra Model 1, Model 2 e DAPS."
     )
 
-    with gr.Row():
-        dataset_type = gr.Dropdown(
-            label="Dataset / sorgente", choices=DATASET_TYPES, value=DATASET_VOC
-        )
-        dataset_root = gr.Textbox(label="Dataset root", value=DEFAULT_VOC_ROOT, scale=3)
-        refresh_btn = gr.Button("Refresh cases/models", scale=1)
+    with gr.Tabs():
+        with gr.Tab("Single evaluation"):
+            with gr.Row():
+                dataset_type = gr.Dropdown(
+                    label="Dataset", choices=DATASET_TYPES, value=DATASET_VOC
+                )
+                dataset_root = gr.Textbox(label="Dataset root", value=DEFAULT_VOC_ROOT, scale=3)
+                refresh_btn = gr.Button("Refresh cases/models", scale=1)
 
-    with gr.Row():
-        voc_split = gr.Dropdown(
-            label="VOC split", choices=VOC_SPLITS, value="val", visible=False
-        )
+            with gr.Row():
+                voc_split = gr.Dropdown(
+                    label="VOC split", choices=VOC_SPLITS, value="val", visible=True
+                )
 
-    status = gr.Textbox(label="Status", interactive=False)
+            status = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Row():
-        case_dropdown = gr.Dropdown(label="Caso / immagine", choices=[], value=None)
+            with gr.Row():
+                case_dropdown = gr.Dropdown(label="Image", choices=[], value=None)
 
-    with gr.Row():
-        model_1 = gr.Dropdown(
-            label="Modello 1", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[0]
-        )
-        model_2 = gr.Dropdown(
-            label="Modello 2", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[1]
-        )
-        daps_mode = gr.Dropdown(
-            label="DAPS mode", choices=DAPS_MODES, value="daps_v7_entropy_weighted"
-        )
+            with gr.Row():
+                model_1 = gr.Dropdown(label="Model 1", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[0])
+                model_2 = gr.Dropdown(label="Model 2", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[1])
+                daps_mode = gr.Dropdown(label="DAPS mode", choices=DAPS_MODES, value="daps_v7_entropy_weighted")
 
-    run_btn = gr.Button("Run segmentation", variant="primary")
+            run_btn = gr.Button("Run segmentation", variant="primary")
 
-    with gr.Row():
-        original = gr.Image(label="Original image")
-        gt_img = gr.Image(label="Ground Truth / Reference")
-        m1_img = gr.Image(label="Model 1")
-        m2_img = gr.Image(label="Model 2")
-        daps_img = gr.Image(label="DAPS")
+            with gr.Row():
+                original = gr.Image(label="Original image")
+                gt_img = gr.Image(label="Ground Truth / Reference")
+                m1_img = gr.Image(label="Model 1")
+                m2_img = gr.Image(label="Model 2")
+                daps_img = gr.Image(label="DAPS")
 
-    metrics = gr.Dataframe(
-        headers=["Segmentation", "Metric 1", "Metric 2", "Metric 3"],
-        label="Metriche",
-        interactive=False,
+            metrics = gr.Dataframe(headers=["Segmentation", "Metric 1", "Metric 2", "Metric 3"], label="Metrics", interactive=False)
+            notes = gr.Textbox(label="Details", lines=13, interactive=False)
+
+        with gr.Tab("Batch evaluation"):
+            gr.Markdown("Run batch evaluation on a dataset and export results to an Excel report.")
+
+            with gr.Row():
+                batch_dataset_type = gr.Dropdown(label="Dataset", choices=DATASET_TYPES, value=DATASET_VOC)
+                batch_dataset_root = gr.Textbox(label="Dataset root", value=DEFAULT_VOC_ROOT, scale=3)
+
+            batch_voc_split = gr.Dropdown(label="VOC split", choices=VOC_SPLITS, value="val")
+
+            with gr.Row():
+                batch_model_1 = gr.Dropdown(label="Model 1", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[0])
+                batch_model_2 = gr.Dropdown(label="Model 2", choices=VOC_DEMO_MODELS, value=VOC_DEMO_MODELS[1])
+                batch_daps_mode = gr.Dropdown(label="DAPS mode", choices=DAPS_MODES, value="daps_v7_entropy_weighted")
+
+            batch_run_btn = gr.Button("Run batch evaluation", variant="primary")
+            batch_status = gr.Textbox(label="Batch status", value="Ready to start a new run.", interactive=False)
+            batch_report = gr.File(label="Excel Report", interactive=False)
+
+    dataset_type.change(update_dataset_defaults, inputs=[dataset_type], outputs=[dataset_root, voc_split]).then(
+        refresh, inputs=[dataset_type, dataset_root, voc_split], outputs=[case_dropdown, model_1, model_2, status]
     )
-    notes = gr.Textbox(label="Dettagli", lines=13, interactive=False)
+    refresh_btn.click(refresh, inputs=[dataset_type, dataset_root, voc_split], outputs=[case_dropdown, model_1, model_2, status])
+    voc_split.change(refresh, inputs=[dataset_type, dataset_root, voc_split], outputs=[case_dropdown, model_1, model_2, status])
+    run_btn.click(run_demo, inputs=[dataset_type, dataset_root, voc_split, case_dropdown, model_1, model_2, daps_mode], outputs=[original, gt_img, m1_img, m2_img, daps_img, metrics, notes])
 
-    dataset_type.change(
-        update_dataset_defaults,
-        inputs=[dataset_type],
-        outputs=[dataset_root, voc_split],
-    ).then(
-        refresh,
-        inputs=[dataset_type, dataset_root, voc_split],
-        outputs=[case_dropdown, model_1, model_2, status],
+    batch_dataset_type.change(update_dataset_defaults, inputs=[batch_dataset_type], outputs=[batch_dataset_root, batch_voc_split]).then(
+        refresh_batch_models, inputs=[batch_dataset_type, batch_dataset_root, batch_voc_split], outputs=[batch_model_1, batch_model_2, batch_status]
     )
-
-    refresh_btn.click(
-        refresh,
-        inputs=[dataset_type, dataset_root, voc_split],
-        outputs=[case_dropdown, model_1, model_2, status],
-    )
-
-    voc_split.change(
-        refresh,
-        inputs=[dataset_type, dataset_root, voc_split],
-        outputs=[case_dropdown, model_1, model_2, status],
-    )
-
-    run_btn.click(
-        run_demo,
-        inputs=[
-            dataset_type,
-            dataset_root,
-            voc_split,
-            case_dropdown,
-            model_1,
-            model_2,
-            daps_mode,
-        ],
-        outputs=[original, gt_img, m1_img, m2_img, daps_img, metrics, notes],
+    batch_voc_split.change(refresh_batch_models, inputs=[batch_dataset_type, batch_dataset_root, batch_voc_split], outputs=[batch_model_1, batch_model_2, batch_status])
+    batch_run_btn.click(
+        run_batch_from_ui,
+        inputs=[batch_dataset_type, batch_dataset_root, batch_voc_split, batch_model_1, batch_model_2, batch_daps_mode],
+        outputs=[batch_report, batch_status],
+        concurrency_limit=1,
     )
 
+    demo.load(refresh, inputs=[dataset_type, dataset_root, voc_split], outputs=[case_dropdown, model_1, model_2, status])
     demo.load(
-        refresh,
-        inputs=[dataset_type, dataset_root, voc_split],
-        outputs=[case_dropdown, model_1, model_2, status],
+        refresh_batch_models,
+        inputs=[batch_dataset_type, batch_dataset_root, batch_voc_split],
+        outputs=[batch_model_1, batch_model_2, batch_status],
     )
 
 
 if __name__ == "__main__":
+    demo.queue(default_concurrency_limit=1)
     demo.launch()
