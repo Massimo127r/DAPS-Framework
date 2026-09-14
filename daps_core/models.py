@@ -159,7 +159,8 @@ def _predict_torchvision_voc(
     size internally, so raw_images/test_images/processed_dataset could fail when
     overlays/metrics expected the original HxW.
 
-    This adapter keeps the model input DAPS-compatible and always resizes logits
+    This adapter preserves the 512x512 resize, applies the selected weights'
+    channel normalization, and always resizes logits
     back to the original image height/width before returning them.
     """
     import torch
@@ -167,7 +168,7 @@ def _predict_torchvision_voc(
     import torchvision.transforms as T
 
     model_key = model_name.split(":", 1)[1]
-    model, _preprocess_unused, device = _load_torchvision_model(model_key)
+    model, weight_preprocess, device = _load_torchvision_model(model_key)
 
     orig_h, orig_w = image.shape[:2]
     pil = Image.fromarray(image.astype(np.uint8)).convert("RGB")
@@ -175,7 +176,9 @@ def _predict_torchvision_voc(
     # Match daps_translator_06/test_inferenza_v6.py and build_offline_dataset.py:
     # Image.open(...).convert("RGB").resize((512, 512)) + T.ToTensor().
     pil_512 = pil.resize((512, 512))
-    batch = T.ToTensor()(pil_512).unsqueeze(0).to(device)
+    tensor = T.ToTensor()(pil_512)
+    tensor = T.Normalize(mean=weight_preprocess.mean, std=weight_preprocess.std)(tensor)
+    batch = tensor.unsqueeze(0).to(device)
 
     with torch.no_grad():
         logits = model(batch)["out"]
@@ -190,7 +193,7 @@ def _predict_torchvision_voc(
     return (
         prob,
         mask,
-        f"torchvision pretrained {model_key}; DAPS06-compatible resize 512 -> original {orig_h}x{orig_w}; first run may download weights",
+        f"torchvision pretrained {model_key}; RGB normalization from pretrained weights; resize 512 -> original {orig_h}x{orig_w}; first run may download weights",
     )
 
 

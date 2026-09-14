@@ -1,149 +1,131 @@
-# DAPS4Massimo - Segmentation GUI MVP
+# Consenso DAPS per la segmentazione semantica
 
-GUI Gradio per confrontare due segmentatori e un consenso DAPS output-level.
+Framework Python per confrontare due modelli di segmentazione semantica e combinarne le predizioni attraverso un consenso sulle probabilità di output. L'interfaccia Gradio consente di analizzare singole immagini, visualizzare le segmentazioni ed eseguire valutazioni batch con esportazione dei risultati in Excel.
 
-Supporta ora cinque sorgenti:
+La segmentazione utilizza le 21 classi PASCAL VOC: 20 categorie di oggetti e il background. Il consenso opera a livello di output e offre due strategie: media delle probabilità (**V6**) e fusione pesata in base all'entropia (**V7**).
 
-1. `Task09_Spleen` - NIfTI 3D con ground truth in `labelsTr/`.
-2. `PASCAL_VOC2012` - immagini VOC con ground truth semantica in `SegmentationClass/`.
-3. `DAPS raw_images` - immagini RGB della vecchia pipeline DAPS/COCO.
-4. `DAPS test_images` - immagini RGB usate dalla vecchia pipeline di valutazione.
-5. `DAPS processed_dataset` - pacchetti `.pt` prodotti da `build_offline_dataset.py`.
+## Funzionamento
 
-## Layout atteso
+Ogni immagine viene elaborata dai due modelli selezionati. Ciascun modello restituisce una distribuzione di probabilità sulle classi per ogni pixel; il modulo di consenso combina queste distribuzioni e assegna a ciascun pixel la classe con probabilità maggiore.
 
-Se `app.py` si trova in:
 
-```text
-src/daps_4_Massimo/app.py
-```
+Le probabilità hanno forma `[C,H,W]`, dove `C` è il numero di classi e `H,W` sono le dimensioni dell'immagine. Le maschere hanno forma `[H,W]` e contengono gli identificativi delle classi.
 
-allora i default sono:
+Quando il dataset fornisce una reference, le segmentazioni vengono confrontate con essa. In assenza di reference, vengono misurati gli accordi tra i due modelli e il consenso. La fusione non richiede addestramento: utilizza direttamente gli output dei segmentatori.
+I modelli torchvision elaborano immagini ridimensionate a 512×512 e normalizzate con i parametri dei pesi pretrained; i logits vengono riportati alla risoluzione originale prima della softmax.
 
-```text
-src/daps_4_Massimo/Task09_Spleen/
-src/daps_4_Massimo/VOCdevkit/VOC2012/
-src/raw_images/
-src/test_images/
-src/processed_dataset/
-```
-
-Puoi comunque modificare `Dataset root` dalla GUI.
+Le metriche calcolate sono mIoU, mIoU senza background e pixel accuracy. Per VOC la reference è una ground truth annotata; per processed_dataset può essere una pseudo-label. Su raw_images e test_images si misura soltanto l'accordo tra segmentazioni.
 
 ## Installazione
 
-Minimo per aprire la GUI e usare Task09/VOC con baseline demo:
+Le dipendenze sono suddivise in due file:
+
+- `requirements.txt`: Gradio, NumPy, Pillow e openpyxl, per interfaccia, elaborazione delle immagini ed esportazione Excel.
+- `requirements_torch.txt`: PyTorch e torchvision, per i segmentatori pretrained e il caricamento dei pacchetti `.pt`.
+
+Aprire un terminale nella cartella del progetto.
+
+### Windows — PowerShell
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements_torch.txt
+.\.venv\Scripts\python.exe app.py
+```
+
+### Linux e macOS
 
 ```bash
-cd src/daps_4_Massimo
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements_torch.txt
+.venv/bin/python app.py
 ```
 
-Per usare modelli reali `torchvision:*` e per leggere `processed_dataset/*.pt`:
+Aprire nel browser l'indirizzo locale mostrato nel terminale. Per utilizzare soltanto i modelli demo o le predizioni precomputate su immagini e dataset VOC è sufficiente installare `requirements.txt`.
 
-```bash
-pip install -r requirements_torch.txt
-python app.py
-```
-
-## Modelli disponibili
-
-### Task09_Spleen
-
-- `heuristic_loose`
-- `heuristic_strict`
-- `pred:<nome>` se metti predizioni in:
+## Organizzazione del progetto
 
 ```text
-src/daps_4_Massimo/predictions/<nome>/spleen_2.nii.gz
+Framework/
+├── app.py
+├── requirements.txt
+├── requirements_torch.txt
+├── daps_core/
+│   ├── models.py
+│   ├── consensus.py
+│   ├── metrics.py
+│   ├── voc.py
+│   └── natural.py
+├── batch_evaluator/
+│   ├── runner.py
+│   ├── excel_export.py
+│   └── outputs/
+├── datasets/
+│   ├── VOCdevkit/VOC2012/
+│   ├── raw_images/
+│   ├── test_images/
+│   └── processed_dataset/
+└── voc_predictions/
 ```
 
-### VOC / raw_images / test_images / processed_dataset
+| Componente | Responsabilità |
+|---|---|
+| `app.py` | Definisce la GUI e collega selezione dei dati, inferenza e visualizzazione |
+| `daps_core/models.py` | Carica i modelli e converte le loro uscite in probabilità e maschere |
+| `daps_core/consensus.py` | Combina le probabilità con le strategie V6 e V7 |
+| `daps_core/metrics.py` | Calcola le metriche di segmentazione |
+| `daps_core/voc.py` | Gestisce casi VOC, classi, palette, predizioni esterne e overlay |
+| `daps_core/natural.py` | Carica immagini RGB e pacchetti `.pt` |
+| `batch_evaluator/runner.py` | Esegue la valutazione dei casi e gestisce avanzamento ed errori |
+| `batch_evaluator/excel_export.py` | Scrive risultati e configurazione del batch in Excel |
 
-- `voc_demo_red_green`
-- `voc_demo_blue_bright`
-- `vocpred:<nome>` se metti predizioni in:
+I percorsi predefiniti dei dataset sono relativi alla cartella di `app.py`. Il campo **Dataset root** permette di selezionare una posizione diversa. La cartella `outputs` viene creata durante l'esportazione. 
+
+## Utilizzo dell'interfaccia
+
+### Valutazione singola
+
+1. Aprire **Single evaluation**.
+2. Selezionare dataset, **Dataset root** e, per VOC, split.
+3. Premere **Refresh cases/models** per aggiornare immagini e modelli disponibili.
+4. Scegliere l'immagine, **Model 1**, **Model 2** e **DAPS mode**.
+5. Premere **Run segmentation**.
+
+L'interfaccia mostra l'immagine originale e gli overlay di reference, Model 1, Model 2 e DAPS. La tabella riporta le metriche; il pannello **Details** descrive sorgenti, classi presenti e percentuale di pixel modificati dal consenso rispetto a ciascun modello.
+
+Con reference sono mostrati i tre confronti rispetto alla reference e l'agreement M1–M2. Senza reference, il pannello corrispondente resta neutro e la tabella mostra M1–M2, DAPS–M1 e DAPS–M2.
+
+I modelli inizialmente selezionati sono quelli demo. Per utilizzare i segmentatori pretrained, selezionarli esplicitamente nei menu.
+
+### Valutazione batch
+
+1. Aprire **Batch evaluation**.
+2. Impostare dataset, percorso, split, due modelli e strategia di consenso.
+3. Premere **Run batch evaluation**.
+4. Scaricare il file dal campo **Excel Report**.
+
+La scheda batch ha una configurazione indipendente da quella singola. Elabora sequenzialmente tutti i casi individuati nella sorgente selezionata e aggiorna l'avanzamento. Un errore su un'immagine viene registrato senza interrompere l'elaborazione delle successive.
+
+## Report Excel
+
+I report sono salvati in:
 
 ```text
-src/daps_4_Massimo/voc_predictions/<nome>/<case_id>.png
-src/daps_4_Massimo/voc_predictions/<nome>/<case_id>.npy
+batch_evaluator/outputs/daps_batch_YYYYMMDD_HHMMSS.xlsx
 ```
 
-- `torchvision:deeplabv3_resnet50`
-- `torchvision:fcn_resnet50`
-- `torchvision:lraspp_mobilenet_v3_large`
+Ogni file contiene due fogli:
 
-La prima esecuzione dei modelli torchvision può scaricare i pesi.
+| Foglio | Contenuto |
+|---|---|
+| **Results** | ID del caso, stato, errore, presenza della reference e metriche per ogni confronto |
+| **Run info** | Dataset, percorso, split, modelli, consenso, conteggi dei casi e data di creazione |
 
-## Metriche
+`Results` contiene 22 colonne: quattro descrittive e tre metriche per ciascuno dei sei confronti M1/reference, M2/reference, DAPS/reference, M1–M2, DAPS–M1 e DAPS–M2. Le metriche rispetto alla reference restano vuote quando questa non è disponibile.
 
-### Task09_Spleen
+Lo stato `completed` indica che il caso è stato elaborato; `Has reference` specifica se è stato possibile confrontarlo con una reference. Per i casi `error`, la colonna `Error` riporta il problema incontrato. Il completamento del batch indica che il report è stato prodotto, anche se alcune righe contengono errori.
 
-Mostra:
+I valori esportati permettono analisi successive per immagine, coppia di modelli e strategia di consenso. Medie e deviazioni standard vengono calcolate separatamente a partire dalle righe del report.
 
-- IoU 3D
-- IoU slice
-- Dice 3D
-- Agreement M1-M2
-
-### PASCAL VOC2012
-
-Mostra:
-
-- mIoU
-- mIoU no-background
-- Pixel accuracy
-- Agreement M1-M2
-
-I pixel VOC con label `255` vengono ignorati.
-
-### raw_images / test_images
-
-Queste cartelle non hanno ground truth. La GUI mostra quindi metriche di accordo:
-
-- Agreement M1-M2
-- Agreement DAPS-M1
-- Agreement DAPS-M2
-
-Questi valori non sono IoU contro una verita' a terra: misurano solo quanto le segmentazioni concordano tra loro.
-
-### processed_dataset
-
-La GUI carica i `.pt` della vecchia pipeline DAPS e usa `target_semantic` come reference/pseudo-ground-truth.
-
-Importante: `target_semantic` e' una pseudo-label generata offline, non un'annotazione umana.
-
-## Modalita' DAPS
-
-- `daps_v7_entropy_weighted`: consenso pesato dalla confidenza/entropia.
-- `daps_v6_average`: media semplice delle probabilita'.
-- `union`: solo binario, utile per Task09.
-- `intersection`: solo binario, utile per Task09.
-
-Per immagini RGB multiclasse usa solo:
-
-```text
-daps_v7_entropy_weighted
-daps_v6_average
-```
-
-## Fix note: raw_images/test_images/processed_dataset con torchvision
-
-Questa versione corregge il caso in cui `torchvision:deeplabv3_resnet50` e
-`torchvision:fcn_resnet50` fallivano sulle immagini della vecchia pipeline DAPS.
-La causa era il preprocessing: la GUI precedente usava `weights.transforms()` di
-torchvision, che puo' cambiare la dimensione spaziale dell'immagine prima
-ell'inferenza. Poi overlay, DAPS e metriche si aspettavano invece maschere della
-stessa dimensione dell'immagine originale.
-
-Ora l'adapter torchvision usa lo stesso schema di `daps_translator_06`:
-
-```text
-PIL RGB -> resize 512x512 -> T.ToTensor() -> modello -> logits ridimensionati alla HxW originale
-```
-
-In questo modo le probabilita' di DeepLab/FCN, le maschere e l'immagine caricata
-hanno sempre dimensioni coerenti.
